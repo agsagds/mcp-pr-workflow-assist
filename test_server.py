@@ -109,7 +109,6 @@ class TestGetPRTemplates:
     @pytest.mark.asyncio
     async def test_returns_templates(self):
         """Test that templates are returned."""
-        assert False, "Bad test"
         result = await get_pr_templates()
         templates = json.loads(result)
         

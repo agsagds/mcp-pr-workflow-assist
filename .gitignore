@@ -209,3 +209,6 @@ __marimo__/
 # Project-specific
 .env.*
 !.env.example
+
+# GitHub events
+github_events.json

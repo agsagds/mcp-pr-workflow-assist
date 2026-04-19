@@ -446,6 +446,12 @@ async def generate_pr_status_report():
 
 
 @mcp.prompt()
+async def pr_review_with_ci_checklist():
+    """PR review: combine code diff (Module 1) + CI/CD status (Module 2) + reviewer checklist."""
+    return _load_prompt_text("pr_review_with_ci_checklist.md")
+
+
+@mcp.prompt()
 async def troubleshoot_workflow_failure():
     """Help troubleshoot a failing GitHub Actions workflow."""
     return _load_prompt_text("troubleshoot_workflow_failure.md")
