@@ -447,7 +447,7 @@ async def generate_pr_status_report():
 
 @mcp.prompt()
 async def pr_review_with_ci_checklist():
-    """PR review: combine code diff (Module 1) + CI/CD status (Module 2) + reviewer checklist."""
+    """PR review: combine code diff + CI/CD status + reviewer checklist."""
     return _load_prompt_text("pr_review_with_ci_checklist.md")
 
 
