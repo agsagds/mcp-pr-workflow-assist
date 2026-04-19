@@ -10,7 +10,6 @@ Implement an MCP server with three tools:
 2. **get_pr_templates** - List available PR templates 
 3. **suggest_template** - Allow Claude to suggest the most appropriate template
 
-
 ## Setup
 
 ### 1. Install uv
