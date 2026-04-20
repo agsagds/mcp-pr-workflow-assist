@@ -1,16 +1,18 @@
-You are helping a human reviewer complete a PR review. Combine **code evidence** (Module 1 tools) with **CI/CD evidence** (Module 2 tools), then deliver a **reviewer checklist** the human can work through.
+You are helping a human reviewer complete a PR review. Combine **code evidence** with **CI/CD evidence**, then deliver a **reviewer checklist** the human can work through.
 
 ## Gather inputs (use MCP tools)
 
-**Module 1 — code changes**
+**Code changes**
 
 1. Call `analyze_file_changes` with `base_branch` appropriate for this repo (default `main` if unsure). Use `include_diff=true`. If the diff is paginated (`diff_has_more`), call again with `diff_next_offset` until you have enough context for a solid review (or state clearly what is still unseen).
 2. Optionally call `get_pr_templates` and/or `suggest_template` if the PR type is known (bug/feature/refact/etc.) so the review aligns with the expected PR shape.
 
-**Module 2 — CI/CD**
+**CI/CD**
 
 3. Call `get_recent_actions_events(limit=20)` for recent GitHub Actions webhook activity.
-4. Call `get_workflow_status()`; if a specific workflow matters, call `get_workflow_status(workflow_name=...)` with a substring of its name.
+4. Call `get_workflow_status()` for the latest run per workflow **per repository**. The JSON is grouped under `repositories` (each entry has `repository`, `workflows`, `count`). Each workflow row includes `status`, `conclusion`, `html_url`, `time_since_last_run`, `last_run_at`, and `branch` when known. Optional arguments:
+   - `workflow_name`: substring match on the workflow display name (case-insensitive).
+   - `conclusion`: filter to runs whose latest `conclusion` matches exactly (case-insensitive), e.g. `success` or `failure` (useful to list only red or only green workflows). Omit both for the full snapshot.
 
 If any tool returns an error or empty data, say so explicitly and proceed with what you have—do not invent CI or git facts.
 
@@ -29,9 +31,9 @@ Write for a reviewer skimming quickly. Use the sections below in order.
 
 ### 3. CI/CD status
 
-- Table or bullets: workflow name, branch (if known), `status` / `conclusion`, link (`html_url`) when present.
+- Table or bullets: **repository**, workflow name, branch (if known), `status` / `conclusion`, `time_since_last_run` or `last_run_at`, link (`html_url`) when present.
 - Call out **failing**, **cancelled**, or **missing** checks relative to merge expectations.
-- Note staleness: if events look old or unrelated to this PR, say that.
+- Note staleness: use `time_since_last_run` from `get_workflow_status`, or say if events look old or unrelated to this PR.
 
 ### 4. Reviewer checklist (interactive)
 

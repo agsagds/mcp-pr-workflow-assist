@@ -6,11 +6,10 @@ Stores events in a JSON file that the MCP server can read.
 
 import json
 from datetime import datetime
-from pathlib import Path
+
 from aiohttp import web
 
-# File to store events
-EVENTS_FILE = Path(__file__).parent / "github_events.json"
+from github_events_helpers import EVENTS_FILE
 
 async def handle_webhook(request):
     """Handle incoming GitHub webhook"""

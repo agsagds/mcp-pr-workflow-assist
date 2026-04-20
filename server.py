@@ -6,9 +6,18 @@ Module 1: Basic MCP Server - Starter Code
 import json
 import os
 import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+from github_events_helpers import (
+    EVENTS_FILE,
+    event_repository_key,
+    format_time_since_last_run,
+    iso_utc_z,
+    load_events_file,
+    workflow_last_run_at,
+)
 from mcp.server.fastmcp import FastMCP
 
 # Initialize the FastMCP server
@@ -276,30 +285,7 @@ async def suggest_template(changes_summary: str, change_type: str) -> str:
     return json.dumps(payload)
 
 # ===== Module 2: New GitHub Actions Tools =====
-
-# Persisted by webhook_server.py (same path)
-EVENTS_FILE = Path(__file__).parent / "github_events.json"
-
-
-def _load_events_file() -> tuple[list[object] | None, dict[str, str] | None]:
-    """Load and validate the events file content."""
-    try:
-        raw = EVENTS_FILE.read_text(encoding="utf-8")
-        events = json.loads(raw)
-    except (OSError, json.JSONDecodeError) as exc:
-        return None, {
-            "error": "Failed to read events file",
-            "events_file": str(EVENTS_FILE),
-            "detail": str(exc),
-        }
-
-    if not isinstance(events, list):
-        return None, {
-            "error": "Invalid events file format (expected a JSON array)",
-            "events_file": str(EVENTS_FILE),
-        }
-
-    return events, None
+# Events path and file helpers: github_events_helpers (shared path with webhook_server.py)
 
 
 @mcp.tool()
@@ -314,7 +300,7 @@ async def get_recent_actions_events(limit: int = 10) -> str:
     if not EVENTS_FILE.exists():
         return json.dumps({"events": [], "count": 0, "events_file": str(EVENTS_FILE)})
 
-    events, error = _load_events_file()
+    events, error = load_events_file()
     if error:
         return json.dumps(error)
     assert events is not None
@@ -332,27 +318,34 @@ async def get_recent_actions_events(limit: int = 10) -> str:
 
 
 @mcp.tool()
-async def get_workflow_status(workflow_name: Optional[str] = None) -> str:
-    """Get the current status of GitHub Actions workflows.
-    
+async def get_workflow_status(
+    workflow_name: Optional[str] = None,
+    conclusion: Optional[str] = None,
+) -> str:
+    """Get the current status of GitHub Actions workflows, grouped by repository.
+
     Args:
-        workflow_name: Optional specific workflow name to filter by
+        workflow_name: Optional workflow name substring (case-insensitive).
+        conclusion: Optional filter on the latest run's conclusion, e.g. success or failure
+            (case-insensitive; matches GitHub's workflow_run.conclusion).
     """
     if not EVENTS_FILE.exists():
         return json.dumps(
             {
-                "workflows": [],
-                "count": 0,
+                "repositories": [],
+                "total_workflows": 0,
+                "repositories_count": 0,
                 "events_file": str(EVENTS_FILE),
             }
         )
 
-    events, error = _load_events_file()
+    events, error = load_events_file()
     if error:
         return json.dumps(error)
     assert events is not None
 
     filtered_name = workflow_name.strip().lower() if workflow_name else None
+    conclusion_filter = conclusion.strip().lower() if conclusion and conclusion.strip() else None
 
     workflow_events: list[dict[str, object]] = []
     for event in events:
@@ -374,55 +367,97 @@ async def get_workflow_status(workflow_name: Optional[str] = None) -> str:
 
         workflow_events.append(event)
 
-    latest_by_workflow: dict[str, dict[str, object]] = {}
+    latest_by_repo_workflow: dict[tuple[str, str], dict[str, object]] = {}
     for event in workflow_events:
         run = event["workflow_run"]
         assert isinstance(run, dict)
-        name = run["name"]
-        assert isinstance(name, str)
+        wf_name = run["name"]
+        assert isinstance(wf_name, str)
+        repo_key = event_repository_key(event)
+        key = (repo_key, wf_name)
 
-        current = latest_by_workflow.get(name)
+        current = latest_by_repo_workflow.get(key)
         if not current:
-            latest_by_workflow[name] = event
+            latest_by_repo_workflow[key] = event
             continue
 
         event_ts = str(event.get("timestamp") or "")
         current_ts = str(current.get("timestamp") or "")
         if event_ts >= current_ts:
-            latest_by_workflow[name] = event
+            latest_by_repo_workflow[key] = event
 
-    workflows = []
-    for name, event in latest_by_workflow.items():
+    by_repository: dict[str, list[dict[str, object]]] = {}
+    for (_repo_key, _wf_name), event in latest_by_repo_workflow.items():
         run = event["workflow_run"]
         assert isinstance(run, dict)
-        workflows.append(
+        raw_conclusion = run.get("conclusion")
+        conclusion_str = (
+            str(raw_conclusion).strip().lower()
+            if raw_conclusion is not None and str(raw_conclusion).strip()
+            else ""
+        )
+        if conclusion_filter and conclusion_str != conclusion_filter:
+            continue
+
+        last_run = workflow_last_run_at(event, run)
+        time_since = format_time_since_last_run(last_run)
+        last_run_at = iso_utc_z(last_run) if last_run is not None else None
+
+        repo_key = event_repository_key(event)
+        item: dict[str, object] = {
+            "name": run["name"],
+            "status": run.get("status"),
+            "conclusion": run.get("conclusion"),
+            "branch": run.get("head_branch"),
+            "event": run.get("event"),
+            "run_number": run.get("run_number"),
+            "run_attempt": run.get("run_attempt"),
+            "updated_at": run.get("updated_at"),
+            "html_url": run.get("html_url"),
+            "repository": event.get("repository"),
+            "received_at": event.get("timestamp"),
+            "time_since_last_run": time_since,
+            "last_run_at": last_run_at,
+        }
+        if last_run is not None:
+            item["seconds_since_last_run"] = int(
+                (datetime.now(timezone.utc) - last_run).total_seconds()
+            )
+        by_repository.setdefault(repo_key, []).append(item)
+
+    for wf_list in by_repository.values():
+        wf_list.sort(
+            key=lambda row: (
+                float(row.get("seconds_since_last_run", 1e18))
+                if isinstance(row.get("seconds_since_last_run"), int)
+                else 1e18
+            ),
+        )
+
+    repository_entries = []
+    for repo in sorted(by_repository.keys()):
+        wf_list = by_repository[repo]
+        repository_entries.append(
             {
-                "name": name,
-                "status": run.get("status"),
-                "conclusion": run.get("conclusion"),
-                "branch": run.get("head_branch"),
-                "event": run.get("event"),
-                "run_number": run.get("run_number"),
-                "run_attempt": run.get("run_attempt"),
-                "updated_at": run.get("updated_at"),
-                "html_url": run.get("html_url"),
-                "repository": event.get("repository"),
-                "received_at": event.get("timestamp"),
+                "repository": repo,
+                "workflows": wf_list,
+                "count": len(wf_list),
             }
         )
 
-    workflows.sort(
-        key=lambda item: str(item.get("received_at") or item.get("updated_at") or ""),
-        reverse=True,
-    )
+    total = sum(len(e["workflows"]) for e in repository_entries)
 
-    return json.dumps(
-        {
-            "workflows": workflows,
-            "count": len(workflows),
-            **({"workflow_name_filter": workflow_name} if workflow_name else {}),
-        }
-    )
+    payload: dict[str, object] = {
+        "repositories": repository_entries,
+        "total_workflows": total,
+        "repositories_count": len(repository_entries),
+    }
+    if workflow_name:
+        payload["workflow_name_filter"] = workflow_name
+    if conclusion:
+        payload["conclusion_filter"] = conclusion
+
+    return json.dumps(payload)
 
 
 # ===== Module 2: MCP Prompts =====
