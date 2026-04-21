@@ -10,9 +10,10 @@ You are helping a human reviewer complete a PR review. Combine **code evidence**
 **CI/CD**
 
 3. Call `get_recent_actions_events(limit=20)` for recent GitHub Actions webhook activity.
-4. Call `get_workflow_status()` for the latest run per workflow **per repository**. The JSON is grouped under `repositories` (each entry has `repository`, `workflows`, `count`). Each workflow row includes `status`, `conclusion`, `html_url`, `time_since_last_run`, `last_run_at`, and `branch` when known. Optional arguments:
+4. Call `get_workflow_status()` for the latest run per workflow **per repository**. The JSON is grouped under `repositories` (each entry has `repository`, `workflows`, `count`). Each workflow row includes `status`, `conclusion`, `html_url`, `time_since_last_run`, `last_run_at`, `branch` when known, plus notification fields: `run_id`, `seen`, `seen_at`, `failure_unseen`, `suggested_notify_github_login`, `suggested_notify_source`. Optional arguments:
    - `workflow_name`: substring match on the workflow display name (case-insensitive).
    - `conclusion`: filter to runs whose latest `conclusion` matches exactly (case-insensitive), e.g. `success` or `failure` (useful to list only red or only green workflows). Omit both for the full snapshot.
+5. When failures are acknowledged or the user asks to clear the unseen flag, call `mark_workflow_runs_seen` with the `run_id` value(s) from the workflow rows above.
 
 If any tool returns an error or empty data, say so explicitly and proceed with what you have—do not invent CI or git facts.
 
@@ -31,7 +32,7 @@ Write for a reviewer skimming quickly. Use the sections below in order.
 
 ### 3. CI/CD status
 
-- Table or bullets: **repository**, workflow name, branch (if known), `status` / `conclusion`, `time_since_last_run` or `last_run_at`, link (`html_url`) when present.
+- Table or bullets: **repository**, workflow name, branch (if known), `status` / `conclusion`, `failure_unseen`, `suggested_notify_github_login`, `run_id`, `time_since_last_run` or `last_run_at`, link (`html_url`) when present.
 - Call out **failing**, **cancelled**, or **missing** checks relative to merge expectations.
 - Note staleness: use `time_since_last_run` from `get_workflow_status`, or say if events look old or unrelated to this PR.
 

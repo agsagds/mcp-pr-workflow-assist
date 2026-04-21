@@ -12,10 +12,14 @@ from typing import Optional
 
 from github_events_helpers import (
     EVENTS_FILE,
+    NOTIFICATION_STATE_FILE,
     event_repository_key,
     format_time_since_last_run,
     iso_utc_z,
     load_events_file,
+    record_workflow_runs_seen,
+    seen_runs_map,
+    suggested_notify_github_login,
     workflow_last_run_at,
 )
 from mcp.server.fastmcp import FastMCP
@@ -324,6 +328,9 @@ async def get_workflow_status(
 ) -> str:
     """Get the current status of GitHub Actions workflows, grouped by repository.
 
+    Each workflow row includes run_id, seen / seen_at, failure_unseen (failure not yet marked seen),
+    suggested_notify_github_login, and suggested_notify_source (pr_author, triggering_actor, actor, sender).
+
     Args:
         workflow_name: Optional workflow name substring (case-insensitive).
         conclusion: Optional filter on the latest run's conclusion, e.g. success or failure
@@ -336,6 +343,7 @@ async def get_workflow_status(
                 "total_workflows": 0,
                 "repositories_count": 0,
                 "events_file": str(EVENTS_FILE),
+                "notification_state_file": str(NOTIFICATION_STATE_FILE),
             }
         )
 
@@ -343,6 +351,8 @@ async def get_workflow_status(
     if error:
         return json.dumps(error)
     assert events is not None
+
+    seen_map = seen_runs_map()
 
     filtered_name = workflow_name.strip().lower() if workflow_name else None
     conclusion_filter = conclusion.strip().lower() if conclusion and conclusion.strip() else None
@@ -404,6 +414,10 @@ async def get_workflow_status(
         last_run_at = iso_utc_z(last_run) if last_run is not None else None
 
         repo_key = event_repository_key(event)
+        run_id_raw = run.get("id")
+        run_id = str(run_id_raw).strip() if run_id_raw is not None and str(run_id_raw).strip() else ""
+        seen_at = seen_map.get(run_id) if run_id else None
+        notify_login, notify_source = suggested_notify_github_login(event, run)
         item: dict[str, object] = {
             "name": run["name"],
             "status": run.get("status"),
@@ -418,6 +432,16 @@ async def get_workflow_status(
             "received_at": event.get("timestamp"),
             "time_since_last_run": time_since,
             "last_run_at": last_run_at,
+            "run_id": run_id if run_id else None,
+            "seen": bool(run_id and run_id in seen_map),
+            "seen_at": seen_at,
+            "failure_unseen": bool(
+                run_id
+                and conclusion_str == "failure"
+                and run_id not in seen_map
+            ),
+            "suggested_notify_github_login": notify_login,
+            "suggested_notify_source": notify_source,
         }
         if last_run is not None:
             item["seconds_since_last_run"] = int(
@@ -451,6 +475,7 @@ async def get_workflow_status(
         "repositories": repository_entries,
         "total_workflows": total,
         "repositories_count": len(repository_entries),
+        "notification_state_file": str(NOTIFICATION_STATE_FILE),
     }
     if workflow_name:
         payload["workflow_name_filter"] = workflow_name
@@ -458,6 +483,24 @@ async def get_workflow_status(
         payload["conclusion_filter"] = conclusion
 
     return json.dumps(payload)
+
+
+@mcp.tool()
+async def mark_workflow_runs_seen(run_ids: list[int | str]) -> str:
+    """Mark GitHub Actions workflow runs as seen (acknowledged / already notified).
+
+    Args:
+        run_ids: One or more workflow run ids (same as workflow_run.id from GitHub).
+    """
+    if not run_ids:
+        return json.dumps(
+            {
+                "error": "run_ids is required",
+                "hint": "Pass run_id values from get_workflow_status rows.",
+            }
+        )
+    result = record_workflow_runs_seen(run_ids)
+    return json.dumps(result)
 
 
 # ===== Module 2: MCP Prompts =====
